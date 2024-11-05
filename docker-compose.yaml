@@ -1,0 +1,21 @@
+services:
+  front: 
+    build: 
+      context: frontend
+      target: dev
+    env_file:
+      - .env
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src/:/app/src/
+  back:
+    build: 
+      context: backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/:/app/
+      - ./backend/cache/:/app/cache/
+    # enable gpu support
+    runtime: nvidia
