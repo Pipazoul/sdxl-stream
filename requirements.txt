@@ -1,0 +1,11 @@
+fastapi
+uvicorn 
+websockets
+diffusers
+huggingface_hub
+xformer
+accelerate
+jinja2
+transformers
+peft
+pydantic-settings

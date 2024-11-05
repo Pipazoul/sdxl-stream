@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Generation Control</title>
+</head>
+<body>
+    <h1>Configure Image Generation</h1>
+    
+    <!-- Configuration Form -->
+    <form id="config-form">
+        <label>
+            Prompt:
+            <input type="text" id="prompt" value="A man smiling" oninput="sendConfig()">
+        </label>
+        <br>
+        <label>
+            Width:
+            <input type="number" id="width" value="512" oninput="sendConfig()">
+        </label>
+        <br>
+        <label>
+            Height:
+            <input type="number" id="height" value="512" oninput="sendConfig()">
+        </label>
+        <br>
+        <label>
+            Guidance Scale:
+            <input type="number" id="guidance_scale" step="0.1" value="0" oninput="sendConfig()">
+        </label>
+        <br>
+        <label>
+            Enable High Quality:
+            <input type="checkbox" id="high_quality" onchange="sendConfig()">
+        </label>
+        <br>
+    </form>
+
+    <!-- Webcam Feed -->
+    <div>
+        <h2>Webcam Feed</h2>
+        <video id="webcam" width="512" height="512" autoplay></video>
+    </div>
+
+    <script>
+        // Use the injected WebSocket URL from the server
+        const socketUrl = "{{ socket_url }}";
+        const ws = new WebSocket(`${socketUrl}/update_config`);
+
+        // Configuration updates for prompt and other parameters
+        function sendConfig() {
+            const prompt = document.getElementById("prompt").value;
+            const width = parseInt(document.getElementById("width").value);
+            const height = parseInt(document.getElementById("height").value);
+            const guidance_scale = parseFloat(document.getElementById("guidance_scale").value);
+            const high_quality = document.getElementById("high_quality").checked;
+
+            ws.send(JSON.stringify({
+                prompt: prompt,
+                width: width,
+                height: height,
+                guidance_scale: guidance_scale,
+                high_quality: high_quality
+            }));
+        }
+
+        // Initialize webcam at 512x512 resolution
+        const video = document.getElementById('webcam');
+        navigator.mediaDevices.getUserMedia({ video: { width: 512, height: 512 } })
+            .then(stream => {
+                video.srcObject = stream;
+                sendWebcamFrames();
+            })
+            .catch(error => {
+                console.error("Error accessing the webcam:", error);
+            });
+
+        // Continuously send webcam frames at approximately 24 FPS
+        function sendWebcamFrames() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const context = canvas.getContext('2d');
+
+            function captureAndSend() {
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Convert canvas to a data URL (base64 encoded image)
+                const imageData = canvas.toDataURL('image/jpeg');
+                
+                // Send image data to the server over WebSocket
+                ws.send(JSON.stringify({ image: imageData }));
+                
+                // Call the function again for continuous capture (approx 24 FPS)
+                setTimeout(captureAndSend, 1000 / 24);
+            }
+            
+            // Start capturing and sending frames
+            captureAndSend();
+        }
+
+        ws.onclose = () => {
+            console.log("WebSocket connection closed");
+        };
+        
+        ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+        };
+    </script>
+</body>
+</html>
