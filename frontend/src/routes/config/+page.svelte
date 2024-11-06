@@ -7,9 +7,28 @@
     let guidance_scale = 0;
     let realtime = false;
     let seed = -1;
+    let camera = false;
+    let videoSource: HTMLVideoElement;
+    let cameraCanvas: HTMLCanvasElement;
 
     ws.onopen = () => {
         console.log("WebSocket connection established");
+    };
+
+    const obtenerVideoCamara = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+            });
+            videoSource.srcObject = stream;
+            videoSource.play();
+            camera = true;
+
+            // Start capturing frames every 5 seconds if camera mode is active
+            startFrameCapture();
+        } catch (error) {
+            console.log(error);
+        }
     };
 
     function sendConfig(live: boolean) {
@@ -20,6 +39,44 @@
                 height: height,
                 guidance_scale: guidance_scale,
                 seed: seed
+            }));
+        }
+    }
+
+    function startFrameCapture() {
+        if (camera) {
+            const captureInterval = setInterval(() => {
+                if (!camera) {
+                    clearInterval(captureInterval);
+                    return;
+                }
+                captureFrame();
+            }, 5000); // Capture every 5 seconds
+        }
+    }
+
+    function captureFrame() {
+        if (!camera || !videoSource || !cameraCanvas) return;
+
+        cameraCanvas.width = videoSource.videoWidth;
+        cameraCanvas.height = videoSource.videoHeight;
+        const context = cameraCanvas.getContext("2d");
+        if (context) {
+            context.drawImage(videoSource, 0, 0, videoSource.videoWidth, videoSource.videoHeight);
+            const imageData = cameraCanvas.toDataURL("image/jpeg");
+            sendImage(imageData);
+        }
+    }
+
+    function sendImage(base64Image: string) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                prompt: prompt,
+                width: width,
+                height: height,
+                guidance_scale: guidance_scale,
+                seed: seed,
+                base64_image: base64Image.split(",")[1]  // Remove the data URL prefix
             }));
         }
     }
@@ -48,7 +105,7 @@
     </div>
     <div>
         <label for="width">Width {width}</label>
-        <input type="range" min="256" max="1024" step="64" bind:value={width} class="range range-primary"  on:input={() => sendConfig(realtime)} />
+        <input type="range" min="256" max="1024" step="64" bind:value={width} class="range range-primary" on:input={() => sendConfig(realtime)} />
     </div>
     <div>
         <label for="height">Height {height}</label>
@@ -57,5 +114,11 @@
     <div>
         <label for="guidance_scale">Guidance Scale</label>
         <input type="range" min="0" max="10" step="1" bind:value={guidance_scale} class="range range-primary" on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <input type="checkbox" bind:checked={camera} class="checkbox" />
+        <video bind:this={videoSource}></video>
+        <button on:click={obtenerVideoCamara}>Enable Camera</button>
+        <canvas bind:this={cameraCanvas} style="display:none;"></canvas>
     </div>
 </section>

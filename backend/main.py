@@ -1,13 +1,13 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi.responses import StreamingResponse
+from diffusers import DiffusionPipeline, TCDScheduler, StableDiffusionImg2ImgPipeline
+from huggingface_hub import hf_hub_download
+from pydantic import BaseModel
+from PIL import Image
+import torch
+import random
 import io
 import time
-import torch
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from diffusers import DiffusionPipeline, TCDScheduler
-from huggingface_hub import hf_hub_download
-from PIL import Image
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-import random
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -25,6 +25,7 @@ pipe = DiffusionPipeline.from_pretrained(
     cache_dir="cache/sd_v1_5",
 ).to("cuda")
 
+
 # Load and fuse the LoRA weights
 pipe.load_lora_weights(hf_hub_download(
     repo_name,
@@ -34,13 +35,30 @@ pipe.load_lora_weights(hf_hub_download(
 pipe.fuse_lora()
 pipe.scheduler = TCDScheduler.from_config(pipe.scheduler.config)
 
+
+img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+    base_model_id,
+    torch_dtype=torch.float16,
+    variant="fp16",
+    safety_checker=None,
+    cache_dir="cache/sd_v1_5",
+)
+img2img_pipe.load_lora_weights(hf_hub_download(
+    repo_name,
+    ckpt_name,
+    cache_dir="cache/lora/hyper_sd",
+))
+img2img_pipe.scheduler = TCDScheduler.from_config(img2img_pipe.scheduler.config)
+img2img_pipe.fuse_lora()
+
 # Default parameters
 current_params = {
     "prompt": "a cat",
     "width": 512,
     "height": 512,
     "guidance_scale": 0,
-    "seed": -1
+    "seed": -1,
+    "init_image": None
 }
 
 def generate_frames():
@@ -53,16 +71,37 @@ def generate_frames():
         if seed == -1:
             seed = random.randint(0, 2**32 - 1)
 
-        # Generate an image from the current parameters
+        # Prepare the generator and the input image (if provided)
         generator = torch.manual_seed(seed)
-        image = pipe(
-            prompt=current_params["prompt"],
-            num_inference_steps=1,
-            guidance_scale=current_params["guidance_scale"],
-            width=current_params["width"],
-            height=current_params["height"],
-            generator=generator
-        ).images[0]
+        init_image = current_params["init_image"]
+        
+        # Resize init_image to match the configured width and height if it's provided
+        if init_image:
+            print("Using init image")
+            print(type(init_image))
+            print(init_image.size)
+            init_image = init_image.resize((current_params["width"], current_params["height"]))
+            print(init_image.size)
+            print("Resized init image")
+            image = img2img_pipe(
+                prompt=current_params["prompt"],
+                guidance_scale=current_params["guidance_scale"],
+                width=current_params["width"],
+                height=current_params["height"],
+                generator=generator,
+                image=init_image
+            ).images[0]
+            print("Image generated")
+        else:
+            # Generate an image with or without init_image based on availability
+            image = pipe(
+                prompt=current_params["prompt"],
+                num_inference_steps=1,
+                guidance_scale=current_params["guidance_scale"],
+                width=current_params["width"],
+                height=current_params["height"],
+                generator=generator,
+            ).images[0]
 
         # Convert to JPEG format
         img_byte_arr = io.BytesIO()
@@ -90,16 +129,7 @@ class ConfigParams(BaseModel):
     guidance_scale: float = 0  # Default to 0 if not provided
     seed: int = -1  # Use -1 to indicate a random seed
 
-@app.post("/update_config")
-async def update_config(params: ConfigParams):
-    global current_params
-    current_params["prompt"] = params.prompt
-    current_params["width"] = max(64, (params.width // 64) * 64)  # Ensure width is a multiple of 64
-    current_params["height"] = max(64, (params.height // 64) * 64)  # Ensure height is a multiple of 64
-    current_params["guidance_scale"] = max(0, params.guidance_scale)  # Ensure guidance_scale is at least 0
-    current_params["seed"] = params.seed  # Set seed (random if -1)
-    return {"message": "Configuration updated successfully"}
-
+import base64
 # WebSocket for real-time config updates
 @app.websocket("/ws/update_config")
 async def websocket_endpoint(websocket: WebSocket):
@@ -107,24 +137,29 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
-            # Update current parameters with received data, validating each parameter
             prompt = data.get("prompt", current_params["prompt"])
             width = max(64, (data.get("width", current_params["width"]) // 64) * 64)
             height = max(64, (data.get("height", current_params["height"]) // 64) * 64)
             guidance_scale = max(0, data.get("guidance_scale", current_params["guidance_scale"]))
             
-            # Try to retrieve the seed and handle cases where it might be None or invalid
+            # Retrieve and validate the seed
             seed = data.get("seed", current_params["seed"])
             try:
-                # Convert seed to an integer if it exists and isn't None
                 seed = int(seed) if seed is not None else -1
             except ValueError:
                 seed = -1  # Default to random if conversion fails
             
-            # Debug print statements to confirm the received values
-            print(f"Received seed: {seed}")
+            # Check if there's a base64 image and update `init_image`
+            base64_image = data.get("base64_image")
+            if base64_image:
+                image_data = base64.b64decode(base64_image)
+                image = Image.open(io.BytesIO(image_data))
+                current_params["init_image"] = image
+            else:
+                # Clear init_image if no base64_image provided in this update
+                current_params["init_image"] = None
 
-            # Update global parameters
+            # Update other parameters
             current_params.update({
                 "prompt": prompt,
                 "width": width,
