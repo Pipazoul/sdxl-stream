@@ -10,3 +10,4 @@ transformers
 peft
 pydantic-settings
 aiortc
+opencv-python

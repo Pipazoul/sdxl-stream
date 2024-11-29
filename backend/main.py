@@ -1,6 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import StreamingResponse
-from diffusers import DiffusionPipeline, TCDScheduler, StableDiffusionImg2ImgPipeline
+from diffusers import DiffusionPipeline, DDIMScheduler,ControlNetModel, StableDiffusionControlNetPipeline
 from huggingface_hub import hf_hub_download
 from pydantic import BaseModel
 from PIL import Image
@@ -8,17 +8,27 @@ import torch
 import random
 import io
 import time
+import cv2
+import numpy as np
 
 # Initialize FastAPI app
 app = FastAPI()
 
 # Load the Stable Diffusion model with LoRA weights
+controlnet_checkpoint = "lllyasviel/control_v11p_sd15_canny"
 base_model_id = "runwayml/stable-diffusion-v1-5"
 repo_name = "ByteDance/Hyper-SD"
 ckpt_name = "Hyper-SD15-1step-lora.safetensors"
 
-pipe = DiffusionPipeline.from_pretrained(
+controlnet = ControlNetModel.from_pretrained(
+    controlnet_checkpoint, 
+    torch_dtype=torch.float16,
+    cache_dir="cache/controlnet",
+)
+
+pipe = StableDiffusionControlNetPipeline.from_pretrained(
     base_model_id,
+    controlnet=controlnet,
     torch_dtype=torch.float16,
     variant="fp16",
     safety_checker=None,
@@ -33,23 +43,9 @@ pipe.load_lora_weights(hf_hub_download(
     cache_dir="cache/lora/hyper_sd",
 ))
 pipe.fuse_lora()
-pipe.scheduler = TCDScheduler.from_config(pipe.scheduler.config)
+pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
 
 
-img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-    base_model_id,
-    torch_dtype=torch.float16,
-    variant="fp16",
-    safety_checker=None,
-    cache_dir="cache/sd_v1_5",
-)
-img2img_pipe.load_lora_weights(hf_hub_download(
-    repo_name,
-    ckpt_name,
-    cache_dir="cache/lora/hyper_sd",
-))
-img2img_pipe.scheduler = TCDScheduler.from_config(img2img_pipe.scheduler.config)
-img2img_pipe.fuse_lora()
 
 # Default parameters
 current_params = {
@@ -60,6 +56,16 @@ current_params = {
     "seed": -1,
     "init_image": None
 }
+
+def canny_edge_detection(image):
+    low_threshold = 100
+    high_threshold = 200
+    image = cv2.Canny(image, low_threshold, high_threshold)
+    image = image[:, :, None]
+    image = np.concatenate([image, image, image], axis=2)
+    control_image = Image.fromarray(image)
+    control_image.save("control.png")
+    return control_image
 
 def generate_frames():
     """Generate frames from the Stable Diffusion model at approximately 24 FPS."""
@@ -75,33 +81,30 @@ def generate_frames():
         generator = torch.manual_seed(seed)
         init_image = current_params["init_image"]
         
-        # Resize init_image to match the configured width and height if it's provided
         if init_image:
-            print("Using init image")
-            print(type(init_image))
-            print(init_image.size)
+            # Resize the init image to the specified width and height
             init_image = init_image.resize((current_params["width"], current_params["height"]))
-            print(init_image.size)
-            print("Resized init image")
-            image = img2img_pipe(
-                prompt=current_params["prompt"],
-                guidance_scale=current_params["guidance_scale"],
-                width=current_params["width"],
-                height=current_params["height"],
-                generator=generator,
-                image=init_image
-            ).images[0]
-            print("Image generated")
+            init_image.save("resized_init_image.jpg")
         else:
-            # Generate an image with or without init_image based on availability
-            image = pipe(
-                prompt=current_params["prompt"],
-                num_inference_steps=1,
-                guidance_scale=current_params["guidance_scale"],
-                width=current_params["width"],
-                height=current_params["height"],
-                generator=generator,
-            ).images[0]
+            # create a random image if init_image is not provided
+            print("No init image")
+            init_image = Image.new("RGB", (current_params["width"], current_params["height"]), (255, 255, 255))
+            init_image.save("resized_init_image.jpg")
+        
+        #convert image to numpy array
+        init_image = np.array(init_image)
+        control_image = canny_edge_detection(init_image)
+        
+        # Generate an image with or without init_image based on availability
+        image = pipe(
+            prompt=current_params["prompt"],
+            num_inference_steps=1,
+            guidance_scale=current_params["guidance_scale"],
+            width=current_params["width"],
+            height=current_params["height"],
+            generator=generator,
+            image=control_image,
+        ).images[0]
 
         # Convert to JPEG format
         img_byte_arr = io.BytesIO()
