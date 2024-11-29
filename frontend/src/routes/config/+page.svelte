@@ -5,12 +5,14 @@
     let width = 512;
     let height = 512;
     let guidance_scale = 0;
+    let controlnet_conditioning_scale = 0.8;
     let realtime = false;
     let seed = -1;
     let camera = false;
     let videoSource: HTMLVideoElement;
     let cameraCanvas: HTMLCanvasElement;
 
+    let streamPreview = false;
     ws.onopen = () => {
         console.log("WebSocket connection established");
     };
@@ -38,6 +40,7 @@
                 width: width,
                 height: height,
                 guidance_scale: guidance_scale,
+                controlnet_conditioning_scale: controlnet_conditioning_scale,
                 seed: seed
             }));
         }
@@ -89,6 +92,13 @@
 </script>
 
 <section>
+    <!--Mjpeg feed https://back-socket.quantic.homes/video_feed-->
+    {#if streamPreview}
+    <div>
+        <h2>MJPEG Preview</h2>
+        <img src="https://back-socket.quantic.homes/video_feed" alt="MJPEG Feed" style="width: 100%; max-width: 512px; border: 1px solid #ccc;" />
+    </div>
+    {/if}
     <h1>Config</h1>
     <p>Config page content</p>
     <div>
@@ -116,9 +126,16 @@
         <input type="range" min="0" max="10" step="1" bind:value={guidance_scale} class="range range-primary" on:input={() => sendConfig(realtime)} />
     </div>
     <div>
-        <input type="checkbox" bind:checked={camera} class="checkbox" />
+        <label for="guidance_scale">Controlnet conditonning Scale</label>
+        <input type="range" min="0" max="1" step="0.1" bind:value={controlnet_conditioning_scale} class="range range-primary" on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <input type="checkbox" bind:checked={streamPreview} class="checkbox" />
+        <label for="streamPreview">Stream Preview</label>
+    </div>
+    <div>
         <video bind:this={videoSource}></video>
-        <button on:click={obtenerVideoCamara}>Enable Camera</button>
+        <button class="btn" on:click={obtenerVideoCamara}>Enable Camera</button>
         <canvas bind:this={cameraCanvas} style="display:none;"></canvas>
     </div>
 </section>

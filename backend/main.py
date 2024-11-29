@@ -54,6 +54,7 @@ current_params = {
     "height": 512,
     "guidance_scale": 0,
     "seed": -1,
+    "controlnet_conditioning_scale": 0.8,
     "init_image": None
 }
 
@@ -87,7 +88,6 @@ def generate_frames():
             init_image.save("resized_init_image.jpg")
         else:
             # create a random image if init_image is not provided
-            print("No init image")
             init_image = Image.new("RGB", (current_params["width"], current_params["height"]), (255, 255, 255))
             init_image.save("resized_init_image.jpg")
         
@@ -103,6 +103,7 @@ def generate_frames():
             width=current_params["width"],
             height=current_params["height"],
             generator=generator,
+            controlnet_conditioning_scale=current_params["controlnet_conditioning_scale"],
             image=control_image,
         ).images[0]
 
@@ -168,7 +169,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 "width": width,
                 "height": height,
                 "guidance_scale": guidance_scale,
-                "seed": seed
+                "seed": seed,
+                "controlnet_conditioning_scale": 0.8
             })
 
     except WebSocketDisconnect:

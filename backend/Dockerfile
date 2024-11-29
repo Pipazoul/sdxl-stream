@@ -3,7 +3,7 @@ FROM pytorch/pytorch:2.5.0-cuda12.4-cudnn9-devel
 
 # Set the working directory
 WORKDIR /app
-
+RUN apt-get update && apt-get install ffmpeg libsm6 libxext6  -y
 # Copy requirements.txt to the container
 COPY requirements.txt .
 
