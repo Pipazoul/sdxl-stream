@@ -1,112 +1,115 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Generation Control</title>
-</head>
-<body>
-    <h1>Configure Image Generation</h1>
-    
-    <!-- Configuration Form -->
-    <form id="config-form">
-        <label>
-            Prompt:
-            <input type="text" id="prompt" value="A man smiling" oninput="sendConfig()">
-        </label>
-        <br>
-        <label>
-            Width:
-            <input type="number" id="width" value="512" oninput="sendConfig()">
-        </label>
-        <br>
-        <label>
-            Height:
-            <input type="number" id="height" value="512" oninput="sendConfig()">
-        </label>
-        <br>
-        <label>
-            Guidance Scale:
-            <input type="number" id="guidance_scale" step="0.1" value="0" oninput="sendConfig()">
-        </label>
-        <br>
-        <label>
-            Enable High Quality:
-            <input type="checkbox" id="high_quality" onchange="sendConfig()">
-        </label>
-        <br>
-    </form>
+<script lang="ts">
+    let socketUrl = `${import.meta.env.VITE_SOCKET}/ws/update_config`;
+    let ws = new WebSocket(socketUrl);
+    let prompt = "A cat";
+    let width = 512;
+    let height = 512;
+    let guidance_scale = 0;
+    let realtime = false;
+    let seed = -1;
+    let camera = false;
+    let cameraCanvas: HTMLCanvasElement;
+    let videoStream: MediaStream | null = null;
+    let videoElement: HTMLVideoElement;
 
-    <!-- Webcam Feed -->
-    <div>
-        <h2>Webcam Feed</h2>
-        <video id="webcam" width="512" height="512" autoplay></video>
-    </div>
+    ws.onopen = () => {
+        console.log("WebSocket connection established");
+    };
 
-    <script>
-        // Use the injected WebSocket URL from the server
-        const socketUrl = "{{ socket_url }}";
-        const ws = new WebSocket(`${socketUrl}/update_config`);
+    async function startCamera() {
+        try {
+            videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoElement.srcObject = videoStream;
+            videoElement.play();
+        } catch (error) {
+            console.error("Failed to access camera:", error);
+        }
+    }
 
-        // Configuration updates for prompt and other parameters
-        function sendConfig() {
-            const prompt = document.getElementById("prompt").value;
-            const width = parseInt(document.getElementById("width").value);
-            const height = parseInt(document.getElementById("height").value);
-            const guidance_scale = parseFloat(document.getElementById("guidance_scale").value);
-            const high_quality = document.getElementById("high_quality").checked;
+    function stopCamera() {
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+            videoStream = null;
+        }
+    }
 
-            ws.send(JSON.stringify({
+    function captureImage() {
+        const context = cameraCanvas.getContext('2d');
+        if (context && videoElement) {
+            context.drawImage(videoElement, 0, 0, cameraCanvas.width, cameraCanvas.height);
+            return cameraCanvas.toDataURL('image/png');
+        }
+        return null;
+    }
+
+    function sendConfig(live: boolean) {
+        if (live && ws.readyState === WebSocket.OPEN) {
+            let configData: any = {
                 prompt: prompt,
                 width: width,
                 height: height,
                 guidance_scale: guidance_scale,
-                high_quality: high_quality
-            }));
-        }
-
-        // Initialize webcam at 512x512 resolution
-        const video = document.getElementById('webcam');
-        navigator.mediaDevices.getUserMedia({ video: { width: 512, height: 512 } })
-            .then(stream => {
-                video.srcObject = stream;
-                sendWebcamFrames();
-            })
-            .catch(error => {
-                console.error("Error accessing the webcam:", error);
-            });
-
-        // Continuously send webcam frames at approximately 24 FPS
-        function sendWebcamFrames() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 512;
-            canvas.height = 512;
-            const context = canvas.getContext('2d');
-
-            function captureAndSend() {
-                context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                // Convert canvas to a data URL (base64 encoded image)
-                const imageData = canvas.toDataURL('image/jpeg');
-                
-                // Send image data to the server over WebSocket
-                ws.send(JSON.stringify({ image: imageData }));
-                
-                // Call the function again for continuous capture (approx 24 FPS)
-                setTimeout(captureAndSend, 1000 / 24);
-            }
+                seed: seed
+            };
             
-            // Start capturing and sending frames
-            captureAndSend();
-        }
+            if (camera) {
+                const initImage = captureImage();
+                if (initImage) {
+                    configData.init_image = initImage;
+                }
+            }
 
-        ws.onclose = () => {
-            console.log("WebSocket connection closed");
-        };
-        
-        ws.onerror = (error) => {
-            console.error("WebSocket error:", error);
-        };
-    </script>
-</body>
-</html>
+            ws.send(JSON.stringify(configData));
+        }
+    }
+
+    function handleCameraToggle() {
+        console.log("Camera toggled");
+        if (camera) {
+            startCamera();
+        } else {
+            stopCamera();
+        }
+    }
+
+    $: {
+        if (realtime) {
+            sendConfig(true);
+        }
+    }
+</script>
+
+<section>
+    <h1>Config</h1>
+    <p>Config page content</p>
+    <div>
+        <input type="checkbox" bind:checked={realtime} class="checkbox" />
+        <label for="realtime">Realtime</label>
+    </div>
+    <div>
+        <label for="seed">Seed</label>
+        <input type="number" bind:value={seed} on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <label for="prompt">Prompt</label>
+        <input type="text" bind:value={prompt} on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <label for="width">Width {width}</label>
+        <input type="range" min="256" max="1024" step="64" bind:value={width} class="range range-primary"  on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <label for="height">Height {height}</label>
+        <input type="range" min="256" max="1024" step="64" bind:value={height} class="range range-primary" on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <label for="guidance_scale">Guidance Scale</label>
+        <input type="range" min="0" max="10" step="1" bind:value={guidance_scale} class="range range-primary" on:input={() => sendConfig(realtime)} />
+    </div>
+    <div>
+        <input type="checkbox" bind:checked={camera} class="checkbox" on:change={handleCameraToggle} />
+        <label for="camera">Camera</label>
+        <video bind:this={videoElement} width="512" height="512" autoplay hidden></video>
+        <canvas bind:this={cameraCanvas} width="512" height="512"></canvas>
+    </div>
+</section>

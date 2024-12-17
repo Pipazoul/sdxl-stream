@@ -54,7 +54,7 @@
                     return;
                 }
                 captureFrame();
-            }, 100); // Capture every 5 seconds
+            }, 200); // Capture every 5 seconds
         }
     }
 

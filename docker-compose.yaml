@@ -1,6 +1,7 @@
 services:
   front: 
     build: 
+      image: yassinsiouda/sdxl-stream-frontend
       context: frontend
       target: dev
     env_file:
@@ -10,7 +11,9 @@ services:
     volumes:
       - ./frontend/src/:/app/src/
   back:
+    
     build: 
+      image: yassinsiouda/sdxl-stream-backend
       context: backend
     ports:
       - "8000:8000"
